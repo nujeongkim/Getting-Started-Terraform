@@ -1,95 +1,185 @@
-##################################################################################
-# PROVIDERS
-##################################################################################
-
-provider "aws" {
-  access_key = "ACCESS_KEY"
-  secret_key = "SECRET_KEY"
-  region     = "us-east-1"
-}
-
-##################################################################################
-# DATA
-##################################################################################
-
-data "aws_ssm_parameter" "ami" {
-  name = "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
-}
-
-##################################################################################
-# RESOURCES
-##################################################################################
-
-# NETWORKING #
-resource "aws_vpc" "vpc" {
-  cidr_block           = "10.0.0.0/16"
-  enable_dns_hostnames = "true"
-
-}
-
-resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.vpc.id
-
-}
-
-resource "aws_subnet" "subnet1" {
-  cidr_block              = "10.0.0.0/24"
-  vpc_id                  = aws_vpc.vpc.id
-  map_public_ip_on_launch = "true"
-}
-
-# ROUTING #
-resource "aws_route_table" "rtb" {
-  vpc_id = aws_vpc.vpc.id
-
-  route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
+terraform {
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~>2.31.1"
+    }
   }
 }
 
-resource "aws_route_table_association" "rta-subnet1" {
-  subnet_id      = aws_subnet.subnet1.id
-  route_table_id = aws_route_table.rtb.id
+provider "azurerm" {
+  features {}
 }
 
-# SECURITY GROUPS #
-# Nginx security group 
-resource "aws_security_group" "nginx-sg" {
-  name   = "nginx_sg"
-  vpc_id = aws_vpc.vpc.id
-
-  # HTTP access from anywhere
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  # outbound internet access
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+resource "azurerm_resource_group" "rg" {
+  name     = "like-and-subscribe"
+  location = "southcentralus"
+  tags = {
+    environment = "dev"
+    source      = "Terraform"
+    owner       = "Jeong"
   }
 }
 
-# INSTANCES #
-resource "aws_instance" "nginx1" {
-  ami                    = nonsensitive(data.aws_ssm_parameter.ami.value)
-  instance_type          = "t2.micro"
-  subnet_id              = aws_subnet.subnet1.id
-  vpc_security_group_ids = [aws_security_group.nginx-sg.id]
+resource "azurerm_virtual_network" "myterraformnetwork" {
+  name                = "myVNet"
+  address_space       = ["10.0.0.0/16"]
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
 
-  user_data = <<EOF
-#! /bin/bash
-sudo amazon-linux-extras install -y nginx1
-sudo service nginx start
-sudo rm /usr/share/nginx/html/index.html
-echo '<html><head><title>Taco Team Server</title></head><body style=\"background-color:#1F778D\"><p style=\"text-align: center;\"><span style=\"color:#FFFFFF;\"><span style=\"font-size:28px;\">You did it! Have a &#127790;</span></span></p></body></html>' | sudo tee /usr/share/nginx/html/index.html
-EOF
+  tags = {
+    environment = "Example VM"
+  }
+}
 
+resource "azurerm_subnet" "myterraformsubnet" {
+  name                 = "mySubnet"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.myterraformnetwork.name
+  address_prefixes     = ["10.0.2.0/24"]
+}
+
+resource "azurerm_public_ip" "myterraformpublicip" {
+  name                = "myPublicIP"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  allocation_method   = "Dynamic"
+  tags = {
+    environment = "Example VM"
+  }
+}
+
+resource "azurerm_network_security_group" "myterraformnsg" {
+  name                = "myNetworkSecurityGroup"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+
+  tags = {
+    environment = "Example VM"
+  }
+}
+
+resource "azurerm_network_security_rule" "myterraformssh" {
+  name                        = "ssh"
+  priority                    = 100
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "22"
+  source_address_prefix       = "*"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.rg.name
+  network_security_group_name = azurerm_network_security_group.myterraformnsg.name
+}
+
+resource "azurerm_network_security_rule" "myterraformhttp" {
+  name                        = "http"
+  priority                    = 101
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "80"
+  source_address_prefix       = "*"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.rg.name
+  network_security_group_name = azurerm_network_security_group.myterraformnsg.name
+}
+
+resource "azurerm_network_security_rule" "myterraformsql" {
+  name                        = "http"
+  priority                    = 102
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "3306"
+  source_address_prefix       = "*"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.rg.name
+  network_security_group_name = azurerm_network_security_group.myterraformnsg.name
+}
+
+resource "azurerm_network_interface" "myterraformnic" {
+  name                = "myNIC"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  ip_configuration {
+    name                          = "muNicConfiguration"
+    subnet_id                     = azurerm_subnet.myterraformsubnet.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.myterraformpublicip.id
+  }
+  tags = {
+    environment = "Example VM"
+  }
+}
+
+resource "azurerm_network_interface_security_group_association" "myterraformnicassoc" {
+  network_interface_id      = azurerm_network_interface.myterraformnic.id
+  network_security_group_id = azurerm_network_security_group.myterraformnsg.id
+}
+
+resource "random_id" "myterraformid" {
+  keepers = {
+    resource_group = azurerm_resource_group.rg.name
+  }
+
+  byte_length = 8
+
+}
+
+resource "azurerm_storage_account" "myterraformaccount" {
+  name                     = "diag${random_id.myterraformid.hex}"
+  resource_group_name      = azurerm_resource_group.rg.name
+  location                 = azurerm_resource_group.rg.location
+  account_replication_type = "LRS"
+  account_tier             = "Standard"
+  tags = {
+    environment = "Example VM"
+  }
+
+}
+
+resource "azurerm_linux_virtual_machine" "myterraformvm" {
+  name                            = "myVM"
+  resource_group_name             = azurerm_resource_group.rg.name
+  location                        = azurerm_resource_group.rg.location
+  network_interface_ids           = [azurerm_network_interface.myterraformnic.id]
+  size                            = "Standard_A1_v2"
+  disable_password_authentication = false
+
+  os_disk {
+    name                 = "osdisk1"
+    disk_size_gb         = "32"
+    caching              = "ReadWrite"
+    storage_account_type = "Standard_LRS"
+  }
+
+  source_image_reference {
+    publisher = "nilespartnersinc1617691698386"
+    offer     = "wordpress-5-7_09-04-2021"
+    sku       = "wordpress"
+    version   = "latest"
+  }
+
+  plan {
+    name      = "wordpress"
+    publisher = "nilespartnersinc1617691698386"
+    product   = "wordpress-5-7_09-04-2021"
+  }
+
+  computer_name  = "myvm"
+  admin_username = "vmadmin"
+  admin_password = "Password12345!"
+
+  boot_diagnostics {
+    storage_account_uri = azurerm_storage_account.myterraformaccount.primary_blob_endpoint
+  }
+
+  tags = {
+    environment = "Example VM"
+  }
 }
 
